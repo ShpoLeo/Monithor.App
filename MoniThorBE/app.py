@@ -8,6 +8,8 @@ from flask_cors import CORS
 from logger.utils  import Utils
 from elasticapm.contrib.flask import ElasticAPM
 import logging
+from psycopg2 import connect, Error
+from pythonBE.dbconnection import get_db_connection
 
 utils = Utils()
 
@@ -86,32 +88,83 @@ def BElogin_lc():
 @app.route('/BEresults/<username>', methods=['GET'])
 @utils.measure_this
 def BEresults(username):
-    if user.is_user_exist(username)['message']!="User exist" :        
-        return "No User is logged in" 
+    logger.debug(f'BEresults function called for user: {username}')
     
-    user_file = f'./userdata/{username}_domains.json'
-    if os.path.exists(user_file):
-        with open(user_file, 'r') as f:
-            data = json.load(f)
-    else:
-        data = []
+    if user.is_user_exist(username)['message'] != "User exist":
+        logger.debug(f'User {username} does not exist')
+        return "No User is logged in"
 
-    all_domains = [item['domain'] for item in data]
-    latest_results = data[:6]
-    failuresCount = sum(1 for item in data if item.get('status_code') == 'FAILED')
-    
-    failuresPrecent = round(float(failuresCount) / len(all_domains) * 100, 1) if len(all_domains) > 0 else 0
-    lastRunInfo = f"{globalInfo['runInfo'][0]}, {globalInfo['runInfo'][1]} Domains, {failuresPrecent}% failures"
+    connection = get_db_connection()
+    if not connection:
+        logger.error("Failed to establish database connection")
+        return jsonify({"error": "Database connection failed"}), 500
 
-    response = {
-        'user': username,
-        'data': data,
-        'all_domains': all_domains,
-        'latest_results': latest_results,
-        'last_run': lastRunInfo
-    }
-    
-    return jsonify(response)
+    try:
+        cursor = connection.cursor()
+        
+        # Get user_id
+        cursor.execute("SELECT id FROM users WHERE username = %s", (username,))
+        user_result = cursor.fetchone()
+        if not user_result:
+            logger.debug(f'User {username} not found in database')
+            return jsonify({"error": "User not found"}), 404
+        user_id = user_result[0]
+
+        # Get all domains for this user with their status
+        logger.debug(f'Fetching domains for user_id: {user_id}')
+        cursor.execute("""
+            SELECT 
+                d.domain,
+                d.status,
+                d.ssl_expiration::text,
+                d.ssl_issuer
+            FROM domains d
+            JOIN user_domains ud ON d.id = ud.domain_id
+            WHERE ud.user_id = %s
+            ORDER BY d.id DESC
+        """, (user_id,))
+        
+        results = cursor.fetchall()
+        
+        # Format the data
+        data = [{
+            'domain': row[0],
+            'status_code': row[1],
+            'ssl_expiration': row[2],
+            'ssl_issuer': row[3]
+        } for row in results]
+
+        all_domains = [item['domain'] for item in data]
+        latest_results = data[:6]
+        failuresCount = sum(1 for item in data if item.get('status_code') == 'FAILED')
+        
+        failuresPrecent = round(float(failuresCount) / len(all_domains) * 100, 1) if len(all_domains) > 0 else 0
+        
+        # Handle the case where globalInfo might not be available
+        try:
+            lastRunInfo = f"{globalInfo['runInfo'][0]}, {globalInfo['runInfo'][1]} Domains, {failuresPrecent}% failures"
+        except (NameError, KeyError):
+            lastRunInfo = f"Last Run Info Not Available, {len(all_domains)} Domains, {failuresPrecent}% failures"
+
+        logger.debug(f'Successfully prepared response for user {username} with {len(all_domains)} domains')
+
+        response = {
+            'user': username,
+            'data': data,
+            'all_domains': all_domains,
+            'latest_results': latest_results,
+            'last_run': lastRunInfo
+        }
+        
+        return jsonify(response)
+
+    except Error as e:
+        logger.error(f"Database error: {e}")
+        return jsonify({"error": "Database error occurred"}), 500
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
     
 
 
@@ -244,6 +297,7 @@ def upload_file():
 def Checkjob(username):    
     globalInfo["runInfo"]=check_liveness.livness_check (username)    
     return  globalInfo["runInfo"]
+
 
 if __name__ == '__main__':
     app.run(host=app.config['HOST'], port=app.config['BE_PORT'], debug=app.config['FLASK_DEBUG'])
