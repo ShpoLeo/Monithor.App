@@ -20,7 +20,7 @@
                         <td>{{ item['domain'] }}</td>
                         <td class="status-code">{{ item['status_code'] }}</td>
                         <td>{{ item['ssl_expiration'] }}</td>
-                        <td>{{ item['ssl_Issuer'] }}</td>
+                        <td>{{ item['ssl_issuer'] }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
@@ -50,7 +50,7 @@
                 <strong>Domain:</strong> {{ result.domain }} <br>
                 <strong>Status:</strong> {{ result.status_code }} <br>
                 <strong>SSL Expiration:</strong> {{ result.ssl_expiration }} <br>
-                <strong>SSL Issuer:</strong> {{ result.ssl_Issuer }}
+                <strong>SSL Issuer:</strong> {{ result.ssl_issuer }}
             </li>
             {% endfor %}
           </ul>
