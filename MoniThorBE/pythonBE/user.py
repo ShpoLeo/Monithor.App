@@ -1,88 +1,95 @@
-import os
-import json
+from psycopg2 import Error
 from logger.logs import logger
-  
-def register_user (userName,password1,password2) :
+from pythonBE.dbconnection import get_db_connection
+
+def register_user(userName, password1, password2):
     logger.debug(f'Register Functions is invoked with new User:{userName}')
-    successMessage = {'message' : "Registered successfully"}
-    failureMessage = {'message' : "Username already taken"}
-    emptyMessage = {'message' : "Username or password is Empty"}
-    passwordMessage = {'message' : "Passwords do not match"}
+    successMessage = {'message': "Registered successfully"}
+    failureMessage = {'message': "Username already taken"}
+    emptyMessage = {'message': "Username or password is Empty"}
+    passwordMessage = {'message': "Passwords do not match"}
+    dbErrorMessage = {'message': "Database error occurred"}
 
-# checking if users file is exist , if not it will be created 
-    if not os.path.exists('users.json'):
-        with open('users.json', 'w') as f:
-            f.write("{}")
-
-    with open('users.json', 'r') as f:
-        current_info = json.load(f)
-        currentListOfUsers=list(current_info)
-    
-    if password1 != password2:
-        return passwordMessage
-
-    for user in currentListOfUsers :
-        if user['username'] == userName:
-            return failureMessage
-    
     # check if the user name and password empty 
     if not userName or not password1 or not password2:
         return emptyMessage
     
-    newUser ={'username':userName,'password': password1 }
-    currentListOfUsers.append(newUser)
-    logger.info(f'New User is created - {newUser}')
+    if password1 != password2:
+        return passwordMessage
 
-        
-    with open('users.json', 'w') as f:
-        json.dump(currentListOfUsers, f, indent=4)
+    connection = get_db_connection()
+    if not connection:
+        logger.error("Failed to establish database connection")
+        return dbErrorMessage
+
+    try:
+        cursor = connection.cursor()
+
+        # Check if user exists
+        cursor.execute("SELECT username FROM users WHERE username = %s", (userName,))
+        if cursor.fetchone():
+            return failureMessage
+
+        # Insert new user
+        cursor.execute(
+            "INSERT INTO users (username, password) VALUES (%s, %s)",
+            (userName, password1)
+        )
+        connection.commit()
+        logger.info(f'New User is created - username: {userName}')
         return successMessage
 
+    except Error as e:
+        logger.error(f"Database error: {e}")
+        return {'message': "Database error occurred"}
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
 
-# Login function
-def login_user (userName,password) :
-        
+def login_user(userName, password):
     logger.debug(f'Login Functions is invoked with User:{userName}')
-    successMessage = { 'message' : "Login Successful"}
-    failureMessage = { 'message' : "error : invalid user name or password"} 
-        
-    # Create users file if not exist 
-    if not os.path.exists('users.json'):
+    successMessage = {'message': "Login Successful"}
+    failureMessage = {'message': "error : invalid user name or password"}
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+
+        cursor.execute(
+            "SELECT username FROM users WHERE username = %s AND password = %s",
+            (userName, password)
+        )
+        if cursor.fetchone():
+            return successMessage
         return failureMessage
-        
-    # loadin current data fro users file and convert to list 
-    with open('users.json', 'r') as f:
-        current_info = json.load(f)
-        currentListOfUsers=list(current_info)
-    
-    # checking is user in file , if yes , validating password 
-    for user in currentListOfUsers :        
-        if user['username'] == userName:
-            if user['password']== password:
-                return successMessage
-            else:
-                return failureMessage
- 
-    return failureMessage
-    
-def is_user_exist (userName) :
-        
-    logger.debug(f'Cheking if user {userName} exist')
-    successMessage = { 'message' : "User exist"}
-    failureMessage = { 'message' : "User or User file is not exist"} 
-    
-        
-    # Create users file if not exist 
-    if not os.path.exists('./users.json'):
+
+    except Error as e:
+        logger.error(f"Database error: {e}")
         return failureMessage
-        
-    # loadin current data fro users file and convert to list 
-    with open('users.json', 'r') as f:
-        current_info = json.load(f)
-        currentListOfUsers=list(current_info)   
-    
-    # checking is user in file , if yes , validating password 
-    for user in currentListOfUsers :            
-        if user['username'] == userName:    
-            return successMessage             
-    return failureMessage
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
+
+def is_user_exist(userName):
+    logger.debug(f'Checking if user {userName} exist')
+    successMessage = {'message': "User exist"}
+    failureMessage = {'message': "User or User file is not exist"}
+
+    try:
+        connection = get_db_connection()
+        cursor = connection.cursor()
+
+        cursor.execute("SELECT username FROM users WHERE username = %s", (userName,))
+        if cursor.fetchone():
+            return successMessage
+        return failureMessage
+
+    except Error as e:
+        logger.error(f"Database error: {e}")
+        return failureMessage
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()

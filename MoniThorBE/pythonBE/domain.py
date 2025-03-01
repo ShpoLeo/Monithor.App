@@ -1,94 +1,142 @@
 import os
-import json
 import re
 from logger.logs import logger
+from psycopg2 import Error
+from pythonBE.dbconnection import get_db_connection
 
-
-def add_domain (userName,domain) :
+def add_domain(userName, domain):
     logger.debug(f'Function is invoked {userName}, {domain}')
-    successMessage = { 'message' : "Domain successfully added"}
-    failureMessageExist = { 'message' : "Domain already exist in file"}
-    failureMessageNotValid = { 'message' : "Invalid Domain Name"}
+    successMessage = {'message': "Domain successfully added"}
+    failureMessageExist = {'message': "Domain already exists"}
+    failureMessageNotValid = {'message': "Invalid Domain Name"}
+    dbErrorMessage = {'message': "Database error occurred"}
     
-    domain=domain.replace('"','')
+    domain = domain.replace('"', '')
     
     if not is_valid_domain(domain):
         return failureMessageNotValid
 
-    
-    userDomainsFile=f'./userdata/{userName}_domains.json'
-    
-    
-    
-    if not os.path.exists(userDomainsFile) :
-         with open(userDomainsFile, 'w') as f:
-            f.write("{}")
+    connection = get_db_connection()
+    if not connection:
+        logger.error("Failed to establish database connection")
+        return dbErrorMessage
 
+    try:
+        cursor = connection.cursor()
 
+        # Get user_id first
+        cursor.execute("SELECT id FROM users WHERE username = %s", (userName,))
+        user_result = cursor.fetchone()
+        if not user_result:
+            return {'message': "User not found"}
+        user_id = user_result[0]
 
-    with open(f'{userDomainsFile}', 'r') as f:
-        current_info = json.load(f)
-        currentListOfDomains=list(current_info)       
+        # Check domain count for user
+        cursor.execute(
+            "SELECT COUNT(*) FROM user_domains WHERE user_id = %s",
+            (user_id,)
+        )
+        if cursor.fetchone()[0] >= 100:
+            return {'message': "Maximum domain limit reached"}
+
+        # Check if domain exists in domains table
+        cursor.execute("SELECT id FROM domains WHERE domain = %s", (domain,))
+        domain_result = cursor.fetchone()
         
-       
-    for d in currentListOfDomains :             
-        if d['domain'] == domain:            
-            return failureMessageExist
+        if domain_result:
+            domain_id = domain_result[0]
+            # Check if user already has this domain
+            cursor.execute(
+                "SELECT 1 FROM user_domains WHERE user_id = %s AND domain_id = %s",
+                (user_id, domain_id)
+            )
+            if cursor.fetchone():
+                return failureMessageExist
+        else:
+            # Insert new domain
+            cursor.execute(
+                """INSERT INTO domains (domain, status, ssl_expiration, ssl_issuer) 
+                VALUES (%s, %s, %s, %s) RETURNING id""",
+                (domain, 'unknown', 'unknown', 'unknown')
+            )
+            domain_id = cursor.fetchone()[0]
 
-    newDomain ={'domain':domain,'status':'unknown','ssl_expiration':'unknown','ssl_issuer':'unknown' }
-    
-    if len(currentListOfDomains) < 100 :
-        currentListOfDomains.append(newDomain)             
-    
-
-    with open(userDomainsFile, 'w') as f:        
-        json.dump(currentListOfDomains, f, indent=4)
-        logger.debug(f'The {domain} Upload To {userDomainsFile} By {userName}')        
-      
+        # Create user-domain relationship
+        cursor.execute(
+            "INSERT INTO user_domains (user_id, domain_id) VALUES (%s, %s)",
+            (user_id, domain_id)
+        )
+        
+        connection.commit()
+        logger.debug(f'The {domain} added to database for user {userName}')
         return successMessage
 
+    except Error as e:
+        logger.error(f"Database error: {e}")
+        return dbErrorMessage
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
 
 
-def remove_domain (userName,domain) :
+
+def remove_domain(userName, domain):
     logger.debug(f'Function is invoked {userName}, {domain}')
-    successMessage = { 'message' : "Domain successfully removed"}
-    notInFileMessage = { 'message' : "Domain not in file"}
-    failureMessageNotValid = { 'message' : "Invalid Domain Name"}
-    domainsFileisNotExist  = { 'message' : "Domains file is not exist"}
+    successMessage = {'message': "Domain successfully removed"}
+    notInDbMessage = {'message': "Domain not found"}
+    failureMessageNotValid = {'message': "Invalid Domain Name"}
+    dbErrorMessage = {'message': "Database error occurred"}
     
-    domain=domain.replace('"','')
+    domain = domain.replace('"', '')
     
     if not is_valid_domain(domain):
         return failureMessageNotValid
 
-    userDomainsFile=f'./userdata/{userName}_domains.json'
-    
-    if not os.path.exists(userDomainsFile):
-        return domainsFileisNotExist
+    connection = get_db_connection()
+    if not connection:
+        logger.error("Failed to establish database connection")
+        return dbErrorMessage
 
-
-
-    with open(userDomainsFile, 'r') as f:
-        current_info = json.load(f)
-        currentListOfDomains=list(current_info)
-        newList=[]
+    try:
+        cursor = connection.cursor()
         
-    msg=notInFileMessage
-    for d in currentListOfDomains :        
-        if d['domain'] == domain:
-            msg=successMessage
-        else:
-            newList.append(d) 
-       
-    with open(userDomainsFile, 'w') as f:
-        json.dump(newList, f, indent=4)        
-        return msg
+        # Get user_id and domain_id
+        cursor.execute("SELECT id FROM users WHERE username = %s", (userName,))
+        user_result = cursor.fetchone()
+        if not user_result:
+            return {'message': "User not found"}
+        user_id = user_result[0]
+
+        cursor.execute("SELECT id FROM domains WHERE domain = %s", (domain,))
+        domain_result = cursor.fetchone()
+        if not domain_result:
+            return notInDbMessage
+        domain_id = domain_result[0]
+        
+        # Delete from user_domains
+        cursor.execute(
+            "DELETE FROM user_domains WHERE user_id = %s AND domain_id = %s RETURNING id",
+            (user_id, domain_id)
+        )
+        if cursor.fetchone():
+            connection.commit()
+            return successMessage
+        return notInDbMessage
+
+    except Error as e:
+        logger.error(f"Database error: {e}")
+        return dbErrorMessage
+    finally:
+        if connection:
+            cursor.close()
+            connection.close()
+
 # function to read from file a list of domain and add to domain file.
 
-def add_bulk(userName,fileName):
-    fileName=fileName.replace('"','')
+def add_bulk(userName, fileName):
+    fileName = fileName.replace('"', '')
     logger.debug(f"File: {fileName}, User: {userName}")
-
     
     if not os.path.exists(fileName):
         return "File Not Exist"
@@ -96,10 +144,10 @@ def add_bulk(userName,fileName):
     try:
         with open(fileName, 'r') as infile:
             for line in infile:
-                add_domain(userName,line.strip())
+                add_domain(userName, line.strip())
     
-    except Exception as e:        
-        return (str(e))
+    except Exception as e:
+        return str(e)
      
     return "Bulk upload finished"
 
