@@ -2,9 +2,6 @@ import time
 import functools
 from logger.logs import logger
 
-
-
-
 class Utils():
     def __init__(self):                
         self.logger=logger
