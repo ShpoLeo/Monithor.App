@@ -135,25 +135,14 @@ def BEresults(username):
         } for row in results]
 
         all_domains = [item['domain'] for item in data]
-        latest_results = data[:6]
-        failuresCount = sum(1 for item in data if item.get('status_code') == 'FAILED')
-        
-        failuresPrecent = round(float(failuresCount) / len(all_domains) * 100, 1) if len(all_domains) > 0 else 0
-        
-        # Handle the case where globalInfo might not be available
-        try:
-            lastRunInfo = f"{globalInfo['runInfo'][0]}, {globalInfo['runInfo'][1]} Domains, {failuresPrecent}% failures"
-        except (NameError, KeyError):
-            lastRunInfo = f"Last Run Info Not Available, {len(all_domains)} Domains, {failuresPrecent}% failures"
+
 
         logger.debug(f'Successfully prepared response for user {username} with {len(all_domains)} domains')
 
         response = {
             'user': username,
             'data': data,
-            'all_domains': all_domains,
-            'latest_results': latest_results,
-            'last_run': lastRunInfo
+            'all_domains': all_domains
         }
         
         return jsonify(response)
@@ -243,19 +232,13 @@ def remove_domain(domainName,username):
 @utils.measure_this
 def add_from_file(filename,username):    
     if user.is_user_exist(username)['message']!="User exist" :
-        return "User does not exist" 
-
-        
+        return "User does not exist"       
     logger.info(f"File for bulk upload:{filename}")
     return domain.add_bulk(username,filename)
     
-    
-# Route to run Livness check 
-# @function.measure_this()
 
 @app.route('/BEcheck/<username>')
 @utils.measure_this
-
 def check_livness(username):    
     if user.is_user_exist(username)['message']!="User exist" :
        return "User does not exist"             
